@@ -10,17 +10,28 @@ Based on [pingmike2/cline2api-workers](https://github.com/pingmike2/cline2api-wo
 
 ## Free models
 
-Verified working (2026-10-18):
+Verified working through the worker (2026-10-18):
 
-- `cline-free/nemotron-3.5-super-vl` — NVIDIA 120B
-- `cline-free/mimo-v2.6-flash` — Xiaomi MoE 309B
-- `cline-free/muse-spark-1.3-contributor` — Meta multimodal
-- `cline-free/solar-mini4` — 35B MoE
-- `deepseek/deepseek-v4-flash`
-- `z-ai/glm-5.3-flash`
+| Model | Provider | Status |
+|---|---|---|
+| `cline-free/nemotron-3.5-super-vl` | NVIDIA (120B) | ✅ verified |
+| `cline-free/mimo-v2.6-flash` | Xiaomi (MoE 309B) | ✅ verified |
+| `cline-free/muse-spark-1.3-contributor` | Meta (multimodal) | ✅ verified |
+| `cline-free/solar-mini4` | 35B MoE | ✅ verified |
+| `deepseek/deepseek-v4-flash` | DeepSeek | ✅ verified |
+| `z-ai/glm-5.3-flash` | Z.AI | ✅ verified |
+
+Known non-free / dead:
+
+- `cline-free/deepseek-v4.1-flash` (README default of the upstream repo) —
+  **retired upstream**, returns 404 `model not found`
+- `cline-pass/*` — requires the paid Cline Pass subscription
+- `deepseek/deepseek-v4.1-flash` (no `cline-free/` prefix) — paid tier
+  (402 without credits)
 
 The model list auto-refreshes from Cline every 10 min (merging the official
-`recommended-models` free channel), so `GET /v1/models` is authoritative.
+`recommended-models` free channel), so `GET /v1/models` is authoritative and
+picks up new free models automatically.
 
 ## Deploy to Cloudflare Workers
 
