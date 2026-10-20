@@ -1,16 +1,29 @@
 # cline2api
 
-Cline's free models as an OpenAI/Anthropic-compatible API on Cloudflare
-Workers — free, serverless, nothing to run locally.
+Cline's free models as an OpenAI/Anthropic-compatible API — deploy on
+Cloudflare Workers **or run the Python Flask server locally/on any box**.
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/nullstacks/cline2api)
 
 Based on [pingmike2/cline2api-workers](https://github.com/pingmike2/cline2api-workers)
 (reverse-engineered from [luawei1/cline2api](https://github.com/luawei1/cline2api)).
 
+## Two runtimes, same API
+
+| | Cloudflare Worker | Python (Flask) |
+|---|---|---|
+| File | `worker.js` | `server.py` |
+| Runtime | edge, no server | local machine, VPS, Docker, systemd… |
+| Install | `npx wrangler deploy` | `pip install -r requirements.txt` |
+| Config | `CLINE_REFRESH_TOKEN` + `API_KEY` secrets | same names as env vars |
+
+Both expose identical endpoints and identical behavior: dynamic model list,
+multi-account pool with cooldown rotation, serial request queue, empty-content
+retry, forced upstream streaming for the free channels.
+
 ## Free models
 
-Verified working through the worker (2026-10-18):
+Verified working (2026-10-18):
 
 | Model | Provider | Status |
 |---|---|---|
@@ -50,15 +63,15 @@ npx wrangler secret put CLINE_REFRESH_TOKEN
 npx wrangler secret put API_KEY
 ```
 
-### Environment variables
+### Environment variables (both runtimes)
 
 | Variable | Type | Required | Purpose |
 |---|---|---|---|
-| `CLINE_REFRESH_TOKEN` | Secret | ✅ | Cline account token(s) — one per line, multi-account pool |
-| `API_KEY` | Secret | recommended | Client access key (traffic light: clients must send `Authorization: Bearer <API_KEY>`) |
+| `CLINE_REFRESH_TOKEN` | Secret / env | ✅ | Cline account token(s) — one per line, multi-account pool |
+| `API_KEY` | Secret / env | recommended | Client access key (default `cline2api-default-key`; set to empty string to disable auth) |
 
 > After changing secrets, redeploy (or re-run `wrangler deploy`) for them to
-> take effect.
+> take effect. On the Python side, just restart the process.
 
 ## Getting a Cline refreshToken (device auth)
 
@@ -74,7 +87,8 @@ python3 cline_oauth.py
 1. It prints an authorization URL (`https://authkit.cline.bot/device?user_code=XXXX-XXXX`)
 2. Open it in any browser, log in with Google / GitHub / email, approve
 3. The script polls automatically and prints the `refreshToken`
-4. `npx wrangler secret put CLINE_REFRESH_TOKEN` and paste it
+4. `npx wrangler secret put CLINE_REFRESH_TOKEN` and paste it — or export it
+   for the Python server (next section)
 
 ### Option 2 — GitHub Actions (works from your phone)
 
@@ -85,41 +99,59 @@ The repo ships `.github/workflows/get-token.yml`:
    token never appears in Actions logs)
 2. Actions → **获取 Cline refreshToken** → Run workflow
 3. Open the link from Telegram, approve, receive the token
-4. Put it in the Worker secret as above
+4. Put it in the Worker secret or Python env as above
 
 ### Notes
 
 - The refresh token is long-lived but can expire — if chat calls start
-  returning 401/403, re-run `cline_oauth.py` and update the secret
+  returning 401/403, re-run `cline_oauth.py` and update the secret/env
 - **Multi-account pooling:** put one token per line in `CLINE_REFRESH_TOKEN`;
   when one account's daily free quota runs out (429 `Daily free limit
-  reached`), the worker cools it down (parsing `Try again in Xh Ym`) and
+  reached`), the gateway cools it down (parsing `Try again in Xh Ym`) and
   switches to the next automatically
+
+## Run the Python server
+
+```bash
+pip install -r requirements.txt          # flask + httpx
+export CLINE_REFRESH_TOKEN='<refreshToken from cline_oauth.py>'
+export API_KEY='my-secret-key'           # optional
+
+python3 server.py                        # serves on 0.0.0.0:8080 (PORT/HOST to override)
+```
+
+Production options:
+
+```bash
+gunicorn -w 1 -b 0.0.0.0:8080 server:app          # keep 1 worker: in-memory account pool
+flask --app server run --host 0.0.0.0 --port 8080 # dev server
+```
+
+A `Dockerfile` is included: `docker build -t cline2api . && docker run -p 8080:8080 -e CLINE_REFRESH_TOKEN='...' -e API_KEY='...' cline2api`.
 
 ## Usage
 
 ```bash
-curl https://<your-worker>.workers.dev/v1/chat/completions \
-  -H "Authorization: Bearer <API_KEY>" \
+curl http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer my-secret-key" \
   -H "Content-Type: application/json" \
-  -H "User-Agent: Mozilla/5.0" \
   -d '{"model":"cline-free/mimo-v2.6-flash","messages":[{"role":"user","content":"hi"}]}'
 ```
 
 ```bash
 # Claude Code
-export ANTHROPIC_BASE_URL=https://<your-worker>.workers.dev
-export ANTHROPIC_API_KEY=<API_KEY>
+export ANTHROPIC_BASE_URL=http://localhost:8080
+export ANTHROPIC_API_KEY=my-secret-key
 export ANTHROPIC_MODEL=cline-free/nemotron-3.5-super-vl
 ```
 
-> ⚠️ **Browser UA required:** Cloudflare's edge rejects non-browser User-Agents
-> on `workers.dev` with error 1010. Send `User-Agent: Mozilla/5.0 ...` from
-> your client, or bind a custom domain.
+> Browser UA note applies to `workers.dev` deployments only (Cloudflare edge
+> error 1010) — the Python server has no such restriction.
 >
-> Behavior notes: `max_tokens` is stripped (upstream 500s on it for free
-> models); free channels are streamed upstream and aggregated for non-stream
-> clients; requests are serialized (upstream returns empty on concurrency > 1).
+> Behavior notes (both runtimes): `max_tokens` is stripped (upstream 500s on
+> it for free models); free channels are streamed upstream and aggregated for
+> non-stream clients; requests are serialized (upstream returns empty on
+> concurrency > 1).
 
 ## Endpoints
 
@@ -132,4 +164,5 @@ POST /v1/messages          Anthropic wire (auto-converted)
 
 ## License
 
-MIT — see LICENSE (© luawei1, upstream worker © pingmike2, packaging © nullstacks)
+MIT — see LICENSE (© luawei1, upstream worker © pingmike2, Python port and
+packaging © nullstacks)
